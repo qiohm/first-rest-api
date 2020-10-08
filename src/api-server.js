@@ -1,5 +1,12 @@
 import express from 'express'
 import bodyParser from 'body-parser'
+import Sequelize from 'sequelize'
+const Op = Sequelize.Op // Bad trick
+
+/*
+import * as sq from 'sequelize'
+let Op = sq.Op
+*/
 
 // import sequelize connector and User and Message models instances
 import { sequelize, User, Message } from './models/db.js'
@@ -34,22 +41,39 @@ const getApiKey = async (req, res, next) => {
 
 // A middleware for checking if an api token is valid
 // and is still active.
-// if Ok the user performing the request is attached to the req object.
 const validateApiKey = async (req, res, next) => {
     const key = req.headers.authorization
     try {
         const user = await User.findAll({
-            attributes: ['username', 'email'],
             where: { api_key: key },
         })
         // check if empty results then not found
         if (user.length === 0) {
             res.status(403).json({ code: 403, data: 'Invalid api token' })
+        } else if (!user[0].active) {
+            res.status(403).json({
+                code: 403,
+                data: 'You are in our blacklist, adios',
+            })
         } else {
-            console.log('USER:', user)
-            req.user = user
             next()
         }
+    } catch (e) {
+        res.status(500).json({ code: 500, data: 'Internal server error' })
+    }
+}
+
+// A middleware for getting user information based on api_key
+// the user's information will be attached to the req object
+const getUserByApiKey = async (req, res, next) => {
+    const key = req.headers.authorization
+    try {
+        const user = await User.findAll({
+            attributes: ['id', 'username', 'email', 'api_key'],
+            where: { api_key: key },
+        })
+        req.user = user[0]
+        next()
     } catch (e) {
         res.status(500).json({ code: 500, data: 'Internal server error' })
     }
@@ -74,13 +98,13 @@ app.post('/register', async (req, res) => {
         const user = await User.create({ username: username, email: email })
         res.json({ code: 200, data: user })
     } catch (e) {
-        console.log('Error', e)
         res.status(500).json({ code: 500, data: 'Internal server error' })
     }
 })
 
 app.use(getApiKey)
 app.use(validateApiKey)
+app.use(getUserByApiKey)
 
 // GET user by id
 app.get('/id/:id', async (req, res) => {
@@ -96,7 +120,7 @@ app.get('/id/:id', async (req, res) => {
             res.json({ code: 200, data: user })
         }
     } catch (e) {
-        res.status(500).json({ code: 500, data: 'Internal server error' })
+        res.status(500).json({ code: 500, data: e })
     }
 })
 
@@ -140,7 +164,7 @@ app.get('/email/:email', async (req, res) => {
 app.get('/users', async (req, res) => {
     try {
         const users = await User.findAll({
-            attributes: ['username', 'email'],
+            attributes: ['username', 'email', 'id'],
         })
         if (users.length === 0) {
             res.status(404).json({ code: 404, data: 'users not found' })
@@ -151,6 +175,100 @@ app.get('/users', async (req, res) => {
         res.status(500).json({ code: 500, data: 'Internal server error' })
     }
 })
+
+// See comments at end of file for an old version
+app.get('/blacklist/:id', async (req, res) => {
+    if (req.user.id !== 1) {
+        res.status(403).json({ code: 403, data: 'Not allowed' })
+    } else {
+        try {
+            const id = req.params.id
+            await User.update({ active: false }, { where: { id: id } })
+            res.status(200).send({ code: 200, data: 'User blacklisted' })
+        } catch (e) {
+            res.status(500).json({ code: 500, data: 'Internal server error' })
+        }
+    }
+})
+
+app.get('/whitelist/:id', async (req, res) => {
+    if (req.user.id !== 1) {
+        res.status(403).json({ code: 403, data: 'Not allowed' })
+    } else {
+        try {
+            const id = req.params.id
+            await User.update({ active: true }, { where: { id: id } })
+            res.status(200).send({ code: 200, data: 'User whitelisted' })
+        } catch (e) {
+            res.status(500).json({ code: 500, data: 'Internal server error' })
+        }
+    }
+})
+
+//Send a message to a suer
+app.post('/send', async (req, res) => {
+    const src = req.user.id
+    const dst = req.body.dst
+    const content = req.body.content
+    try {
+        const message = await Message.create({
+            src: src,
+            dst: dst,
+            content: content,
+        })
+        res.status(200).json({ code: 200, data: message })
+    } catch (e) {
+        res.status(500).json({ code: 500, data: 'Internal server error' })
+    }
+})
+
+app.get('/read', async (req, res) => {
+    try {
+        const user_id = req.user.id
+        const messages = await Message.findAll({
+            where: {
+                [Op.or]: [
+                    {
+                        src: {
+                            [Op.eq]: user_id,
+                        },
+                    },
+                    {
+                        dst: {
+                            [Op.eq]: user_id,
+                        },
+                    },
+                ],
+            },
+            order: [['updatedAt', 'desc']],
+        })
+        res.status(200).json({ code: 200, data: messages })
+    } catch (e) {
+        res.status(500).json({ code: 500, data: 'Internal server error.' })
+    }
+})
+
+//BEFORE Exercice 7
+/*
+app.get('/blacklist/:id', async (req, res) => {
+    const key = req.headers.authorization
+    try {
+        const user = await User.findAll({
+            attributes: ['id', 'username', 'email', 'api_key'],
+            where: { api_key: key },
+        })
+        if (user[0].id === 1) {
+            const id = req.params.id
+            await User.update({ active: false }, { where: { id: id } })
+            res.status(200).send({ code: 200, data: 'User blacklisted' })
+        } else {
+            res.status(403).send({ code: 403, data: 'Not allowed' })
+        }
+    } catch (e) {
+        res.status(500).json({ code: 500, data: e })
+    }
+})
+*/
 
 // Start express server
 app.listen(PORT, IP, () => {
