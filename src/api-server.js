@@ -13,7 +13,6 @@ import { sequelize, User, Message } from './models/db.js'
 
 // Test if database connection is OK else exit
 try {
-    await sequelize.authenticate() // try to authentificate on the database
     console.log('Connection has been established successfully.')
     await User.sync({ alter: true }) // modify users table schema is something changed
     await Message.sync({ alter: true }) // same for messages table
@@ -23,7 +22,7 @@ try {
 }
 
 // Local network configuration
-const IP = '192.168.0.11'
+const IP = 'localhost'
 const PORT = 7777
 
 const app = express()
